@@ -1,0 +1,69 @@
+name: Deploy to EKS
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  AWS_REGION: eu-west-2
+  CLUSTER_NAME: my-eks-cluster
+  AWS_ACCOUNT_ID: 137068224361
+  ECR_REPO: reactapp
+  DOCKER_WORKDIR: Docker/3tier-nodejs
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS CLI
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig for EKS
+        run: |
+          aws eks --region $AWS_REGION update-kubeconfig --name $CLUSTER_NAME
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+          CLUSTER_NAME: ${{ env.CLUSTER_NAME }}
+
+      - name: Build Docker images
+        run: |
+          cd $DOCKER_WORKDIR
+          docker compose up -d
+        env:
+          DOCKER_WORKDIR: ${{ env.DOCKER_WORKDIR }}
+
+      - name: Authenticate Docker to AWS ECR
+        run: |
+          aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+          AWS_ACCOUNT_ID: ${{ env.AWS_ACCOUNT_ID }}
+
+      - name: Tag and push Docker images
+        run: |
+          docker tag 3tier-nodejs-backend:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:backend-latest
+          docker tag 3tier-nodejs-frontend:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:frontend-latest
+          docker tag mongo:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:mongo-latest
+
+          docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:backend-latest
+          docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:frontend-latest
+          docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO:mongo-latest
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+          AWS_ACCOUNT_ID: ${{ env.AWS_ACCOUNT_ID }}
+          ECR_REPO: ${{ env.ECR_REPO }}
+
+      - name: Deploy to Kubernetes
+        run: |
+          kubectl apply -f K8S/frontend.yml
+          kubectl apply -f K8S/backend.yml
+          kubectl apply -f K8S/mongodb.yml
+          kubectl apply -f K8S/ingress.yml

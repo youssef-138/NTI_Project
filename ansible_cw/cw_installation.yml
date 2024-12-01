@@ -1,0 +1,68 @@
+---
+- name: Install Amazon CloudWatch Agent on Worker Nodes
+  hosts: all
+  become: yes
+  vars:
+    cw_agent_package_url: "https://s3.amazonaws.com/amazoncloudwatch-agent/amazon_linux/amd64/latest/amazon-cloudwatch-agent.rpm"
+    cloudwatch_config_file: "/opt/aws/amazon-cloudwatch-agent/bin/config.json"
+
+  tasks:
+    - name: Install dependencies
+      yum:
+        name: 
+          - "yum-utils"
+          - "aws-cli"
+        state: present
+
+    - name: Download CloudWatch Agent RPM
+      get_url:
+        url: "{{ cw_agent_package_url }}"
+        dest: "/tmp/amazon-cloudwatch-agent.rpm"
+
+    - name: Install CloudWatch Agent RPM
+      yum:
+        name: "/tmp/amazon-cloudwatch-agent.rpm"
+        state: present
+
+    - name: Create CloudWatch Agent config file
+      copy:
+        dest: "{{ cloudwatch_config_file }}"
+        content: |
+          {
+            "agent": {
+              "metrics_collection_interval": 60,
+              "run_as_user": "root"
+            },
+            "metrics": {
+              "append_dimensions": {
+                "InstanceId": "${aws:InstanceId}"
+              },
+              "metrics_collected": {
+                "cpu": {
+                  "measurement": [
+                    "cpu_usage_idle",
+                    "cpu_usage_iowait",
+                    "cpu_usage_system",
+                    "cpu_usage_user"
+                  ],
+                  "resources": ["*"],
+                  "metrics_collection_interval": 60
+                },
+                "mem": {
+                  "measurement": ["mem_used", "mem_free"],
+                  "metrics_collection_interval": 60
+                },
+                "disk": {
+                  "measurement": ["disk_used", "disk_free", "disk_inodes_used", "disk_inodes_free"],
+                  "metrics_collection_interval": 60,
+                  "resources": ["/"]
+                }
+              }
+            }
+          }
+
+    - name: Start CloudWatch Agent
+      systemd:
+        name: amazon-cloudwatch-agent
+        state: started
+        enabled: yes
